@@ -8,7 +8,41 @@ permissions:
   contents: write
 
 jobs:
-  tag-and-release:
+  tag:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      created: ${{ steps.create_tag.outputs.created }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read version
+        id: version
+        run: echo "version=v$(cat VERSION)" >> $GITHUB_OUTPUT
+
+      - name: Check if tag exists
+        id: check_tag
+        run: |
+          if git rev-parse --verify refs/tags/${{ steps.version.outputs.version }} >/dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create tag
+        id: create_tag
+        if: steps.check_tag.outputs.exists == 'false'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag ${{ steps.version.outputs.version }}
+          git push origin ${{ steps.version.outputs.version }}
+          echo "created=true" >> $GITHUB_OUTPUT
+
+  build:
+    needs: tag
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -26,27 +60,6 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Read version
-        id: version
-        run: echo "version=v$(cat VERSION)" >> $GITHUB_OUTPUT
-
-      - name: Check if tag exists
-        id: check_tag
-        run: |
-          if git rev-parse --verify refs/tags/${{ steps.version.outputs.version }} >/dev/null 2>&1; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "exists=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Create tag
-        if: steps.check_tag.outputs.exists == 'false'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag ${{ steps.version.outputs.version }}
-          git push origin ${{ steps.version.outputs.version }}
-
       - name: Build binary
         run: |
           CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -trimpath -ldflags "-s -w" -o csvkit-${{ matrix.goos }}-${{ matrix.goarch }} ./cmd/csvkit
@@ -58,7 +71,7 @@ jobs:
           path: csvkit-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
 
   publish:
-    needs: tag-and-release
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
